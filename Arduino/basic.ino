@@ -6,22 +6,23 @@
 // Basic UI: Input from `potPin` outputted to `ledPin` voltage
 // Basic HR: 250mv outputted to `pwmPin` every `interval` milliseconds
 
+
 /********** variables **********/
-// pins
+// Pins
 const int potPin = A0;              // Define the analog pin for the potentiometer
 const int ledPin = 9;               // Define the digital pin for the LED
 const int pwmPin = 3;               // Define the pin for pulse width modulation for heartbeat
 
-// potentiometer and LED values
+// Potentiometer and LED values
 int potValue = 0;
 int ledValue = 0;
 
 // HR & BPM
-unsigned long previousMillis = 0;   // Will store last time the output was updated
+unsigned long hrBeatTime = 0;       // Starting time of current heartbeat (ms)
 
-// pulse
+// Pulse
 const int operatingVoltage = 5000;  // Operating voltage in millivolts
-bool pulseActive = false;
+
 
 /********** setup **********/
 void setup() {
@@ -33,20 +34,20 @@ void setup() {
   Serial.begin(9600);
 }
 
+
 /********** main loop **********/
 void loop() {
-  // Pulse hardcoded for testing (75 bpm, 20ms, 250mV)
-  int bpm = 75;                               // Beats per minute
-  int targetMillivolts = 250;                 // Output voltage in millivolts
-  long pulseDuration = 20;                    // Duration of the pulse in milliseconds
+  // BPM hardcoded for testing
+  int bpm = 75;
 
   // Helper function execution
-  pulse(targetMillivolts, pulseDuration, bpm);
+  pulse(bpm);
   nonHRInterface();
 
   // Add a small delay for stability
   delay(10);
 }
+
 
 /********** helper functions **********/
 // Basic UI for potentiometer and LED input
@@ -54,7 +55,7 @@ void nonHRInterface() {
   potValue = analogRead(potPin);              // Read the potentiometer value (0-1023)
   ledValue = map(potValue, 0, 1023, 0, 255);  // Map the potentiometer value to a PWM value (0-255)
   analogWrite(ledPin, ledValue);              // Output the PWM value to the LED
-  
+
   // Print the potentiometer and LED values to the serial monitor
   Serial.print("Potentiometer Value: ");
   Serial.print(potValue);
@@ -62,37 +63,62 @@ void nonHRInterface() {
   Serial.println(ledValue);
 }
 
-// Pulse functionality
-void pulse(int targetMillivolts, long pulseDuration, int bpm) {
-  // Calculate the interval based on the BPM
-  long calculatedInterval = 60000 / bpm;
 
-  // Get the current time
+// Pulse functionality
+void pulse(int bpm) {
   unsigned long currentMillis = millis();
 
-  // Check if the calculated interval has passed and the pulse is not active
-  if ((currentMillis - previousMillis >= calculatedInterval) && !pulseActive) {
-    // Save the last time the pulse started
-    previousMillis = currentMillis;
-
-    // Calculate the duty cycle for the target millivolts
-    int dutyCycle = calculateDutyCycle(targetMillivolts, operatingVoltage);
-
-    // Start the pulse by sending the target millivolts output
-    analogWrite(pwmPin, dutyCycle);
-    pulseActive = true;
+  // Indicates a new beat is starting
+  if (hrBeatTime == 0) {
+    hrBeatTime = currentMillis;      // Update heartbeat start time
+    return;                          // Haptic motor already off, need not update
   }
 
-  // Check if the pulse should be turned off
-  if (pulseActive && (currentMillis - previousMillis >= pulseDuration)) {
-    // Turn off the pulse
-    analogWrite(pwmPin, 0);
-    pulseActive = false;
+  // Calculate the heartbeat length based on the BPM
+  long calculatedInterval = 60000 / bpm;
+
+  // Is the current heartbeat still elapsing
+  if (currentMillis - hrBeatTime < calculatedInterval) {
+    // Calculate correct millivolts to send to haptic motor
+    double targetMillivolts = calculateMillivolts(bpm, currentMillis - hrBeatTime);
+
+    // Calculate the duty cycle (for pwm) using target millivolts
+    int dutyCycle = calculateDutyCycle(targetMillivolts, operatingVoltage);
+
+    // Send to haptic motor
+    analogWrite(pwmPin, dutyCycle);
+  } else {
+    analogWrite(pwmPin, 0);   // Turn off the motor
+    hrBeatTime = 0;           // Indicate next beat is ready to start
   }
 }
 
+
+// Function to calculate QT interval (milliseconds) given BPM
+float calculateQTi(int bpm) {
+  return -5 * bpm + 700;
+}
+
+
+// Piecewise function that returns target millivolts given BPM and milliseconds into the current heartbeat
+double calculateMillivolts(int bpm, unsigned long milliseconds) {
+  int x = milliseconds;
+  int qrs = 80;
+  int u = 120;
+  float qti = calculateQTi(bpm);
+
+  if (x >= 0 && x < qrs) {
+    return sin((PI / qrs) * x) * 3000;
+  } else if (x >= (qti - u) && x < qti) {
+    return sin((PI / u) * (x - (qti - u))) * 1250;
+  } else {
+    return 0;
+  }
+}
+
+
 // Return duty cycle inferred from specified millivolts
-int calculateDutyCycle(int millivolts, int operatingVoltage = 5000) {
+int calculateDutyCycle(double millivolts, int operatingVoltage) {
   // Ensure the millivolts value is within the range
   if (millivolts < 0) {
     millivolts = 0;
@@ -101,6 +127,6 @@ int calculateDutyCycle(int millivolts, int operatingVoltage = 5000) {
   }
 
   // Calculate the duty cycle
-  int dutyCycle = (millivolts * 255) / operatingVoltage;
-  return dutyCycle;
+  return (millivolts * 255) / operatingVoltage;
 }
+
