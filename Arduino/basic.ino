@@ -1,7 +1,7 @@
 // ********* basic.ino **********/
 // Interfacing template for our Arduino circuit
 // By Max Konzerowsky
-// July 2024
+// August 2024
 
 
 /********** variables **********/
